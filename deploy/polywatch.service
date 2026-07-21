@@ -1,0 +1,20 @@
+[Unit]
+Description=Polywatch - surveillance Polymarket + alertes Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adapte l'utilisateur et les chemins à ton VPS (défaut Lightsail Ubuntu : "ubuntu")
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polywatch
+ExecStart=/home/ubuntu/polywatch/.venv/bin/python main.py --users users.json
+Restart=always
+RestartSec=5
+# Journalisation via journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=polywatch
+
+[Install]
+WantedBy=multi-user.target

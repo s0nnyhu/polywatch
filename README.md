@@ -129,7 +129,73 @@ python main.py --users users.json
 python main.py -a 0xADDR1 -a 0xADDR2
 ```
 
+## Déploiement en arrière-plan (VPS / AWS Lightsail)
+
+Sur un serveur Linux (Ubuntu Lightsail par défaut), le plus robuste est un **service
+systemd** : arrière-plan, redémarrage auto en cas de crash, relance au reboot.
+
+### 1. Installer le projet sur le VPS
+
+```bash
+sudo apt update && sudo apt install -y python3-venv git
+git clone git@github.com:s0nnyhu/polywatch.git
+cd polywatch
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+```
+
+### 2. Créer la configuration
+
+```bash
+# .env avec les tokens/ids (voir plus haut)
+nano .env
+# users.json avec les traders à suivre (voir users.example.json)
+cp users.example.json users.json && nano users.json
+```
+
+Puis récupère les `chat_id` (après avoir écrit `/start` à chaque bot) :
+
+```bash
+./.venv/bin/python main.py --discover-chat-ids
+```
+
+### 3. Installer le service systemd
+
+Un modèle est fourni dans [`deploy/polywatch.service`](deploy/polywatch.service).
+Adapte au besoin `User=` et les chemins (`WorkingDirectory`, `ExecStart`), puis :
+
+```bash
+sudo cp deploy/polywatch.service /etc/systemd/system/polywatch.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now polywatch
+```
+
+### 4. Gérer et surveiller le service
+
+```bash
+sudo systemctl status polywatch      # état
+journalctl -u polywatch -f           # logs en direct
+sudo systemctl restart polywatch     # redémarrer (après modif de config)
+sudo systemctl stop polywatch        # arrêter
+```
+
+> Après toute modification de `users.json` ou `.env`, relance : `sudo systemctl restart polywatch`.
+
+### Alternative rapide (sans systemd)
+
+Pour un test rapide en arrière-plan (ne survit pas au reboot) :
+
+```bash
+# avec tmux
+tmux new -s polywatch
+./.venv/bin/python main.py --users users.json
+# détacher : Ctrl+b puis d   ·   rattacher : tmux attach -t polywatch
+
+# ou avec nohup
+nohup ./.venv/bin/python main.py --users users.json > polywatch.log 2>&1 &
+```
+
 ## Notes
 
 - L'adresse à surveiller est le **proxy wallet** Polymarket (celui visible dans l'URL du profil `polymarket.com/profile/0x...`).
-- Pour tourner en continu sur un serveur, utilise `systemd`, `pm2`, `screen`/`tmux` ou un conteneur.
+- Le service systemd est la méthode recommandée pour une exécution 24/7.
