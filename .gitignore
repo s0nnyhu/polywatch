@@ -1,0 +1,18 @@
+# Secrets
+.env
+users.json
+
+# State
+state.json
+*.state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
