@@ -95,17 +95,19 @@ class Monitor:
                     self.state.mark(user.address, activity.uid)
                     continue
 
+                # On marque AVANT de notifier pour garantir la déduplication même
+                # si l'envoi ou le log échoue (évite tout renvoi en boucle).
+                self.state.mark(user.address, activity.uid)
                 if self._notifier_for(user).notify_activity(activity):
                     sent += 1
                     logger.info(
                         "Notifié : %s %s $%.2f @ %.3f sur %s",
-                        user.label or activity.username,
+                        activity.username,
                         activity.side or activity.type,
                         activity.usdc_size,
                         activity.price,
                         activity.title or activity.type,
                     )
-                self.state.mark(user.address, activity.uid)
 
         self.state.save()
         return sent
