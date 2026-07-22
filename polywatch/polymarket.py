@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import email.utils
 import logging
+import time
 from dataclasses import dataclass
 
 import requests
@@ -77,11 +79,52 @@ class Activity:
         )
 
 
+def _parse_retry_after(value: str) -> float | None:
+    """Interprète un header `Retry-After` en secondes d'attente.
+
+    Le header peut être un nombre de secondes ("5") ou une date HTTP
+    ("Wed, 21 Oct 2026 07:28:00 GMT"). Retourne None si illisible.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    parsed = email.utils.parsedate_to_datetime(value)
+    if parsed is not None:
+        delay = parsed.timestamp() - time.time()
+        return max(delay, 0.0)
+    return None
+
+
 class PolymarketClient:
     def __init__(self, timeout: int = 15) -> None:
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "polywatch/1.0"})
+
+    def _handle_rate_limit(self, resp: requests.Response, context: str) -> bool:
+        """Logue le délai d'attente conseillé si on se prend un 429.
+
+        Retourne True si un rate limit (429) a été détecté.
+        """
+        if resp.status_code != 429:
+            return False
+        retry_after = _parse_retry_after(resp.headers.get("Retry-After", ""))
+        if retry_after is not None:
+            logger.warning(
+                "Rate limit Polymarket (429) sur %s — réessayer dans %.0f s "
+                "(prochain cycle dans poll_interval s).",
+                context,
+                retry_after,
+            )
+        else:
+            logger.warning(
+                "Rate limit Polymarket (429) sur %s — aucun header Retry-After, "
+                "réessai au prochain cycle.",
+                context,
+            )
+        return True
 
     def resolve_username(self, username: str) -> str | None:
         """Résout un username Polymarket en adresse de proxy wallet.
@@ -97,6 +140,8 @@ class PolymarketClient:
             resp = self.session.get(
                 f"{GAMMA_API}/public-search", params=params, timeout=self.timeout
             )
+            if self._handle_rate_limit(resp, f"/public-search ({username})"):
+                return None
             resp.raise_for_status()
             data = resp.json()
         except (requests.RequestException, ValueError) as exc:
@@ -133,6 +178,8 @@ class PolymarketClient:
             resp = self.session.get(
                 f"{DATA_API}/activity", params=params, timeout=self.timeout
             )
+            if self._handle_rate_limit(resp, f"/activity ({address})"):
+                return []
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as exc:
