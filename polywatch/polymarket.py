@@ -5,7 +5,7 @@ from __future__ import annotations
 import email.utils
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
@@ -36,6 +36,8 @@ class Activity:
     event_slug: str
     name: str
     pseudonym: str
+    condition_id: str = ""  # identifiant du marché (condition on-chain)
+    asset: str = ""  # identifiant du token/outcome
 
     @property
     def username(self) -> str:
@@ -76,7 +78,34 @@ class Activity:
             event_slug=str(item.get("eventSlug", "")),
             name=str(item.get("name", "")),
             pseudonym=str(item.get("pseudonym", "")),
+            condition_id=str(item.get("conditionId", "")).lower(),
+            asset=str(item.get("asset", "")).lower(),
         )
+
+
+@dataclass
+class MyMarkets:
+    """Marchés dans lesquels *je* suis engagé (positions ouvertes).
+
+    Sert à repérer si l'activité d'un trader surveillé porte sur un marché que
+    je détiens déjà. On matche en priorité sur `condition_id`, avec repli sur
+    le slug (au cas où l'un des deux manquerait dans la réponse de l'API).
+    """
+
+    condition_ids: set[str] = field(default_factory=set)
+    slugs: set[str] = field(default_factory=set)
+
+    def contains(self, activity: "Activity") -> bool:
+        if activity.condition_id and activity.condition_id in self.condition_ids:
+            return True
+        if activity.slug and activity.slug in self.slugs:
+            return True
+        if activity.event_slug and activity.event_slug in self.slugs:
+            return True
+        return False
+
+    def __bool__(self) -> bool:
+        return bool(self.condition_ids or self.slugs)
 
 
 def _parse_retry_after(value: str) -> float | None:
@@ -199,3 +228,46 @@ class PolymarketClient:
         ]
         activities.sort(key=lambda a: a.timestamp)
         return activities
+
+    def fetch_positions(self, address: str, limit: int = 500) -> MyMarkets:
+        """Récupère mes positions ouvertes et retourne les marchés concernés.
+
+        Seules les positions avec une taille non nulle sont conservées (les
+        positions soldées/rachetées sont ignorées). En cas d'erreur, retourne
+        un `MyMarkets` vide (aucun marché en commun signalé).
+        """
+        params = {"user": address, "limit": limit, "sizeThreshold": 0.1}
+        try:
+            resp = self.session.get(
+                f"{DATA_API}/positions", params=params, timeout=self.timeout
+            )
+            if self._handle_rate_limit(resp, f"/positions ({address})"):
+                return MyMarkets()
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:
+            logger.warning("Erreur récupération de mes positions (%s) : %s", address, exc)
+            return MyMarkets()
+        except ValueError as exc:
+            logger.warning("Réponse JSON invalide pour mes positions (%s) : %s", address, exc)
+            return MyMarkets()
+
+        if not isinstance(data, list):
+            return MyMarkets()
+
+        markets = MyMarkets()
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if not float(item.get("size", 0) or 0):
+                continue
+            condition_id = str(item.get("conditionId", "")).lower()
+            slug = str(item.get("slug", ""))
+            event_slug = str(item.get("eventSlug", ""))
+            if condition_id:
+                markets.condition_ids.add(condition_id)
+            if slug:
+                markets.slugs.add(slug)
+            if event_slug:
+                markets.slugs.add(event_slug)
+        return markets

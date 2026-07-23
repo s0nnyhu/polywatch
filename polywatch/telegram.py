@@ -48,8 +48,8 @@ class TelegramNotifier:
             logger.error("Échec de l'envoi Telegram : %s", exc)
             return False
 
-    def notify_activity(self, activity: Activity) -> bool:
-        return self.send(format_activity(activity))
+    def notify_activity(self, activity: Activity, mine: bool = False) -> bool:
+        return self.send(format_activity(activity, mine=mine))
 
     def check(self) -> bool:
         """Vérifie que le bot et le chat_id sont valides."""
@@ -109,13 +109,18 @@ def discover_chats(bot_token: str, timeout: int = 15) -> list[dict]:
     return chats
 
 
-def format_activity(activity: Activity) -> str:
+def format_activity(activity: Activity, mine: bool = False) -> str:
     # Pour un TRADE, on distingue BUY/SELL ; sinon on prend le type brut.
     key = activity.side if activity.type == "TRADE" else activity.type
     emoji, action = TYPE_STYLE.get(key, ("📌", activity.type or "ACTIVITÉ"))
 
     label = html.escape(activity.username)
     lines = [f"{emoji} <b>{action}</b> — <b>{label}</b>", ""]
+
+    # Clin d'œil si je suis moi aussi positionné sur ce marché.
+    if mine:
+        lines.append("👋 <b>Eh, toi aussi t'es sur ce marché !</b>")
+        lines.append("")
 
     if activity.title:
         lines.append(f"📊 {html.escape(activity.title)}")

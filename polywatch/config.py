@@ -63,6 +63,10 @@ class Config:
     state_file: str = "state.json"
     lookback_seconds: int = 3600
     activity_types: tuple[str, ...] = ALL_TYPES
+    # Mon propre wallet : sert à repérer les marchés que je détiens déjà.
+    my_wallet: str = ""
+    # Durée de validité du cache de mes positions (secondes).
+    my_markets_ttl: int = 60
 
     @classmethod
     def load(
@@ -103,6 +107,11 @@ class Config:
         state_file = os.getenv("POLYWATCH_STATE_FILE", "state.json")
         lookback = int(os.getenv("POLYWATCH_LOOKBACK_SECONDS", "3600"))
         activity_types = _resolve_activity_types(os.getenv("POLYWATCH_ACTIVITY_TYPES"))
+        # PM_WALLET (mon adresse) : on tolère aussi POLYWATCH_MY_WALLET en repli.
+        my_wallet = (
+            os.getenv("PM_WALLET") or os.getenv("POLYWATCH_MY_WALLET") or ""
+        ).strip().lower()
+        my_markets_ttl = int(os.getenv("POLYWATCH_MY_MARKETS_TTL", "60"))
 
         return cls(
             telegram_bot_token=token,
@@ -113,6 +122,8 @@ class Config:
             state_file=state_file,
             lookback_seconds=lookback,
             activity_types=activity_types,
+            my_wallet=my_wallet,
+            my_markets_ttl=my_markets_ttl,
         )
 
 

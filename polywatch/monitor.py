@@ -6,7 +6,7 @@ import logging
 import time
 
 from .config import Config, User
-from .polymarket import PolymarketClient
+from .polymarket import MyMarkets, PolymarketClient
 from .state import State
 from .telegram import TelegramNotifier
 
@@ -20,7 +20,24 @@ class Monitor:
         self.state = State(config.state_file)
         # Cache des notifiers Telegram, indexé par (bot_token, chat_id).
         self._notifiers: dict[tuple[str, str], TelegramNotifier] = {}
+        # Cache de mes propres marchés (positions ouvertes), rafraîchi avec TTL.
+        self._my_markets = MyMarkets()
+        self._my_markets_at = 0.0
         self._resolve_usernames()
+
+    def _refresh_my_markets(self) -> None:
+        """Rafraîchit le cache de mes positions si le TTL est dépassé."""
+        if not self.config.my_wallet:
+            return
+        now = time.time()
+        if self._my_markets and now - self._my_markets_at < self.config.my_markets_ttl:
+            return
+        markets = self.client.fetch_positions(self.config.my_wallet)
+        # On ne remplace le cache que si la requête a renvoyé quelque chose, pour
+        # éviter d'effacer mes marchés sur une erreur réseau/rate limit ponctuelle.
+        if markets:
+            self._my_markets = markets
+        self._my_markets_at = now
 
     def _notifier_for(self, user: User) -> TelegramNotifier:
         """Retourne le notifier propre à l'utilisateur, ou le bot global par défaut."""
@@ -58,6 +75,8 @@ class Monitor:
         now = int(time.time())
         cutoff = now - self.config.lookback_seconds
         sent = 0
+
+        self._refresh_my_markets()
 
         for user in self.config.users:
             activities = self.client.fetch_activities(
@@ -98,7 +117,8 @@ class Monitor:
                 # On marque AVANT de notifier pour garantir la déduplication même
                 # si l'envoi ou le log échoue (évite tout renvoi en boucle).
                 self.state.mark(user.address, activity.uid)
-                if self._notifier_for(user).notify_activity(activity):
+                mine = self._my_markets.contains(activity)
+                if self._notifier_for(user).notify_activity(activity, mine=mine):
                     sent += 1
                     logger.info(
                         "Notifié : %s %s $%.2f @ %.3f sur %s",
